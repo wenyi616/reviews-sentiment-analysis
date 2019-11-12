@@ -17,14 +17,27 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize 
 
 # np.set_printoptions(threshold=np.inf)
+
 nltk.download('punkt')
 nltk.download('stopwords')
+nltk.download('wordnet')
 nltk.download('averaged_perceptron_tagger')
 
 from sklearn import preprocessing
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import confusion_matrix
+from sklearn.naive_bayes import GaussianNB
+
+# helper function for lemmatization
+def get_wordnet_pos(word):
+    tag = nltk.pos_tag([word])[0][1][0].upper()
+    tag_dict = {"J": wordnet.ADJ,
+                "N": wordnet.NOUN,
+                "V": wordnet.VERB,
+                "R": wordnet.ADV}
+    return tag_dict.get(tag, wordnet.NOUN)
+
 
 # data (np.array) -> new_data: np.array
 def pre_process_data(data):
@@ -36,6 +49,9 @@ def pre_process_data(data):
         review = data[i]
         # convert to lowercase
         review = review.lower()
+
+        # add whiltespace after punctuation
+        review = re.sub( r'([a-zA-Z])([,.!])', r'\1\2 ', review)
 
         # remove punctuation
         review = review.translate(string.maketrans("",""), string.punctuation)
@@ -59,16 +75,6 @@ def pre_process_data(data):
 
     return np.array(new_data)
 
-# helper function for lemmatization
-def get_wordnet_pos(word):
-    """Map POS tag to first character lemmatize() accepts"""
-    tag = nltk.pos_tag([word])[0][1][0].upper()
-    tag_dict = {"J": wordnet.ADJ,
-                "N": wordnet.NOUN,
-                "V": wordnet.VERB,
-                "R": wordnet.ADV}
-
-    return tag_dict.get(tag, wordnet.NOUN)
 
 # load data
 amazon_df = pd.read_csv('./data/amazon_cells_labelled.txt', sep="\t", header=None)
@@ -104,106 +110,112 @@ testing_data = np.concatenate((np.array(amazon_testing_df["Reviews"]),
 testing_label = np.concatenate((np.array(amazon_testing_df["Labels"]),
     np.array(yelp_testing_df["Labels"]), np.array(imdb_testing_df["Labels"])),axis=0)
 
-# print(training_data.shape)
-# print(training_label.shape)
-# print(testing_data.shape)
-# print(testing_label.shape)
+print("****** Done loading data ******")
 
 training_data = pre_process_data(training_data)
-# print(training_data)
-print("* Done Loading Data")
+testing_data = pre_process_data(testing_data)
+print(training_data.shape)
+print(testing_data.shape)
+print("****** Done pre-prossing data ******")
 
-
-# n-gram model with a dictionary of n-grams (n=2)
+# Bag of Words Model 
 word_dict = {}
 
 # iterate thru all reviews in the training set
 for i in range(len(training_data)):
     review = training_data[i]
-    word_tokens = word_tokenize(review)
-    for j in range(len(word_tokens)-1):
-        w = word_tokens[j] + " " + word_tokens[j+1]
+    
+    for w in word_tokenize(review):
         if w not in word_dict:
             word_dict[w] = 0
 
-print(len(word_dict)) # 11158
+print(len(word_dict)) #3846
+print("****** Done building word dictionary ******")
 
 # iterate all reviews in both sets to create review feature vectors
-
-# training vector of size (2400*11158) 
+# training vector of size (2400*3905) 
 training_vectors = []
 
 for i in range(len(training_data)):
-    # initialize a vector of size (1*11158) 
+    # initialize a vector of size (1*3905) 
     review_vector = np.zeros(len(word_dict))
     review = training_data[i]
 
-    word_tokens = word_tokenize(review)
     for w in word_tokenize(review):
-        for j in range(len(word_tokens)-1):
-            w = word_tokens[j] + " " + word_tokens[j+1]
-            if w in word_dict:
-                index = word_dict.keys().index(w)
-                review_vector[index] += 1   
+        if w in word_dict:
+            index = word_dict.keys().index(w)
+            review_vector[index] += 1   
     
     training_vectors.append(review_vector)
-print("* Done Generating Training feature vectors")
 
-# testing vector of size (600*11158) 
+
+# # testing vector of size (600*3905) 
 testing_vectors = []
-
-for i in range(len(testing_data)):
-    # initialize a vector of size (1*11158) 
+for i in range(len(testing_data)): 
     review_vector = np.zeros(len(word_dict))
+    
     review = testing_data[i]
-
-    word_tokens = word_tokenize(review)
     for w in word_tokenize(review):
-        for j in range(len(word_tokens)-1):
-            w = word_tokens[j] + " " + word_tokens[j+1]
-            if w in word_dict:
-                index = word_dict.keys().index(w)
-                review_vector[index] += 1   
+        if w in word_dict:
+            index = word_dict.keys().index(w)
+            review_vector[index] += 1   
     
     testing_vectors.append(review_vector)
-print("* Done Generating Testing feature vectors")
+
 
 training_vectors = np.array(training_vectors)
 print(training_vectors.shape)
+print(training_vectors)
 
 testing_vectors = np.array(testing_vectors)
 print(testing_vectors.shape)
+# print(testing_vectors)
+print("****** Done building training & testing feature vectors ******")
+
 
 # L2 normalization
 training_vectors_norm = preprocessing.normalize(training_vectors, norm='l2')
 testing_vectors_norm = preprocessing.normalize(testing_vectors, norm='l2')
-print("* Done Normalization")
+print("****** Done normalizations ******")
 
 
 # Sentiment prediction using Logistic Regression
 logreg = LogisticRegression()
 logreg.fit(training_vectors_norm, training_label)
-pred = logreg.predict(testing_vectors_norm)
-acc = accuracy_score(pred,testing_label)  
-cm = confusion_matrix(testing_label,pred)
+pred_logreg = logreg.predict(testing_vectors_norm)
+acc_logreg = accuracy_score(pred_logreg, testing_label)  
+cm_logreg = confusion_matrix(testing_label, pred_logreg)
 
 # print Logistic Regression results
 print("\n**** Logistic Regression ****")   
-print("Accuracy = %.2f" % acc)
-print(cm)
+print("Accuracy = %.2f" % acc_logreg)
+print(cm_logreg)
+print("****** Done reporting performance ******")
 
 # returns a matrix of weights (coefficients)
 # AKA, returns the index of most significant words (take negation to argsort in descending order) 
 co = np.argsort(np.negative(np.absolute(logreg.coef_)))[0] 
+
+
+# Sentiment prediction using Naive Bayes Classifier
+gnb = GaussianNB()
+gnb.fit(training_vectors_norm, training_label)
+pred_gnb = gnb.predict(testing_vectors_norm)
+acc_gnb = accuracy_score(pred_gnb, testing_label)  
+cm_gnb = confusion_matrix(testing_label, pred_gnb)
+
+# print Naive Bayes results
+print("\n**** Naive Bayes  ****")   
+print("Accuracy = %.2f" % acc_gnb)
+print(cm_gnb)
+print("****** Done reporting performance ******")
 
 # print 10 most significant words
 important_words = []
 for i in range(10):
     important_words.append(word_dict.keys()[co[i]])
 print(important_words)
-
-
-
+print("****** Well Done! ******")
 
 
 
